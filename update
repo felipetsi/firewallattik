@@ -1,0 +1,138 @@
+#!/bin/bash
+#################################################################
+# This script whill update the solution Attik			#
+#		Create by Felipe Pereira da Silva		#
+#		Created in 21/08/2009			   	#
+#		Last update 23/11/2013			   	#
+#		Version: 1.0				   	#
+#################################################################
+
+DIRINSTALLICC="/var/www" 						# Recomend /var/.incti
+DIRROTINES="/var/.incti/.rot"						# Directory's rotines. Scripts de executables
+DIRHOMEDEFAULTATTIK="/var/.incti"					# Default directory of attik
+DIRPASSWDDB="/var/.incti/.access" 					# Directory's to store password's user attikuser of Data Base
+FILEPASSWDDB="$DIRPASSWDDB/.access_exec.php"				# File's password DB
+DIRBACKUPDB="/var/.incti/backup" 					# Directory's to store backup
+FILEFAILOVER="/var/.incti/failover.conf"				# File's configuration failover
+FILEFAILOVERLOG="/var/.incti/.failover.log"				# File's log failover
+FILEVIPUP="/var/.incti/.failover-up.sh";				# Script for UP the virtual address
+FILEVIPDOWN="/var/.incti/.failover-donw.sh";				# Script for DOWN the virtual address
+FILERULEDEFECT="/var/.incti/.lastruledefect.log"			# File to store the defect rule ID
+FILEPORTHTTPD="/var/.incti/.access/httpd_port.php"			# File to stor HTTP port of http server
+DIRGRAPHS="$DIRINSTALLICC/attik/modules/firewall/graph"
+FILEDIRECTORY="$DIRINSTALLICC/attik/configuration/directory.php"
+FILEROUTESH="/var/.incti/.route.sh";
+DIRSOURCE=$(pwd)
+FILEAUTOSTART="/etc/init.d/firewall"
+FILESAVERULE="/etc/init.d/rc.firewall"
+# User'DB
+USERDB="attikuser"
+# Password of user'DB
+PASSWDDB=$(cat /var/.incti/.access/.access_exec.php | sed 's/.*$INCTIPW = "//' | sed 's/".*//')
+
+clear
+
+echo "
+
+Este procedimento irá atualizar o Attik para versão 2.0.5.
+
+Após a atualização, reavalie os registros de endereços de rede no módulo Firewall, se atentando a nova opção chamada \"Tipo\", onde você poderá informar registros globais e locais para que as regras possam ser exportadas adequadamente.
+
+Após esta atualização será necessário acessar novamente a tela de configuração geral e reconfigurar os seus parâmetros.
+
+
+Precione <Enter> para continuar."
+read tecla
+
+# Install packages
+echo "Updating the apt source..."
+apt-get update
+
+echo "Install VPN tool ..."
+apt-get install openswan -y
+
+echo "Install software hd interation..."
+apt-get install hdparm -y
+
+echo "Stoping apache2..."
+/etc/init.d/apache2 stop
+
+if [ -e /tmp/attik_old ]
+then
+	rm -rf /tmp/attik_old
+fi
+
+## Capture information of this machine
+ partition=$(df -T | grep /var | cut -d" " -f1 | sed -n 1p | cut -d0 -f1 | cut -d2 -f1 | cut -d3 -f1 |  cut -d4 -f1 | cut -d5 -f1 |  cut -d6 -f1 |  cut -d7 -f1 | cut -d8 -f1 |  cut -d9 -f1)
+ vartemp=$(echo $partition|cut -d "/" -f2)
+ if [ "$vartemp" != "dev" ]
+ then
+  partition=$(df -T | grep / | cut -d" " -f1 | sed -n 1p | cut -d0 -f1 | cut -d2 -f1 | cut -d3 -f1 |  cut -d4 -f1 | cut -d5 -f1 |  cut -d6 -f1 |  cut -d7 -f1 | cut -d8 -f1 |  cut -d9 -f1)
+ fi
+ hdvalid=$(hdparm -i $partition | grep SerialNo | cut -d"=" -f4 )
+ while [ -z "$hdvalid" ]
+ do
+  echo "----------:
+  Não foi possível identificar a partição /var.
+  Informe o caminho físico que contém esta unidade.
+ ----------:
+  Don't was possible identified the partition /var.
+  You can put the physical path this unit.
+  ####
+	 Ex: /dev/hda"
+  read partition
+
+ done
+
+echo "$partition" > $DIRHOMEDEFAULTATTIK/partitioninstaled
+
+echo "
+#############----- Digite a senha do usuário root do BD:"
+stty -echo
+read PASSROOTBD
+
+
+mv $DIRINSTALLICC/attik /tmp/attik_old
+cp -R $DIRSOURCE/files/attik $DIRINSTALLICC
+cp /tmp/attik_old/includes/conn_db_cc.php $DIRINSTALLICC/attik/includes/
+#cp /tmp/attik_old/configuration/variablegeneral.php $DIRINSTALLICC/attik/configuration/
+cp /tmp/attik_old/modules/firewall/includes/variable_personal.php $DIRINSTALLICC/attik/modules/firewall/includes/
+cp /tmp/attik_old/modules/firewall/graph/* $DIRINSTALLICC/attik/modules/firewall/graph/
+
+ln -s $DIRINSTALLICC/attik/includes/lib_graph/.lib_graph\@/ $DIRGRAPHS/.lib
+
+mysql -u root -p$PASSROOTBD -e "CREATE DATABASE cc_vpn DEFAULT CHARACTER SET latin1 COLLATE latin1_swedish_ci";
+mysql -u root -p$PASSROOTBD -e "GRANT ALL PRIVILEGES ON  cc_vpn.* TO attikuser@localhost IDENTIFIED BY '$PASSWDDB'";
+
+mysql -u $USERDB -p$PASSWDDB -e "CREATE TABLE vpnconnection (id int(4) NOT NULL AUTO_INCREMENT, name varchar(100) NOT NULL, left_ip int(10) NOT NULL, left_subnet int(10) NOT NULL, right_ip int(10) NOT NULL, right_subnet int(10) NOT NULL, password varchar(100) NOT NULL, auto varchar(10) NOT NULL, PRIMARY KEY (id),  UNIQUE KEY name (name), KEY fk_left_ip_controlcenter_interface_id (left_ip),  KEY fk_left_subnet_cc_firewall_network_id (left_subnet), KEY fk_right_ip_cc_firewall_network_id (right_ip), KEY fk_right_subnet_cc_firewall_network_id (right_subnet) ) ENGINE=MyISAM AUTO_INCREMENT=5 DEFAULT CHARSET=latin1"
+
+mysql -u $USERDB -p$PASSWDDB -e "ALTER TABLE controlcenter.profilevpn MODIFY id INT(2) auto_increment";
+
+mysql -u $USERDB -p$PASSWDDB -e "INSERT INTO tab_dir_act (id_tab, id_dir, id_act) VALUES (2,2,1)";
+mysql -u $USERDB -p$PASSWDDB -e "INSERT INTO tab_dir_act (id_tab, id_dir, id_act) VALUES (2,4,1)";
+mysql -u $USERDB -p$PASSWDDB -e "INSERT INTO tab_dir_act (id_tab, id_dir, id_act) VALUES (2,5,1)";
+
+echo "Applied permitions..."
+chown -R attikuserweb.www-data $DIRINSTALLICC
+chmod -R 500 $DIRINSTALLICC
+chmod -R 700 $DIRGRAPHS
+chmod 644 $DIRINSTALLICC/attik/modules/firewall/includes/variable_personal.php
+chmod 700 $DIRINSTALLICC/attik/configuration/
+chmod 744 $DIRINSTALLICC/attik/configuration/variablegeneral.php
+chown -R attikuserweb.www-data $DIRHOMEDEFAULTATTIK
+chmod -R 700 $DIRHOMEDEFAULTATTIK
+
+VERIFYBIN=$(cat /etc/sudoers | grep '/bin/cat' | grep attikuserweb)
+echo $VERIFYBIN
+if [ "$VERIFYBIN" == "" ]
+then
+	chmod 640 /etc/sudoers
+	echo 'attikuserweb	ALL=NOPASSWD:/etc/init.d/ipsec' >> /etc/sudoers
+	echo 'attikuserweb	ALL=NOPASSWD:/usr/sbin/ipsec' >> /etc/sudoers
+	echo 'attikuserweb	ALL=NOPASSWD:/bin/chmod' >> /etc/sudoers
+	chmod 440 /etc/sudoers
+	/etc/init.d/sudo restart
+fi
+
+echo "Starting apache2..."
+/etc/init.d/apache2 start

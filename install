@@ -1,0 +1,245 @@
+#!/bin/bash
+#################################################################
+# This script whill install the solution Attik			#
+#		Create by Felipe Pereira da Silva		#
+#		Created in 01/09/2008			   	#
+#		Last update 23/11/2013			   	#
+#		Version: 2.0				   	#
+#################################################################
+
+clear
+
+DIRINSTALLICC="/var/www" 						# Recomend /var/.incti
+DIRROTINES="/var/.incti/.rot"						# Directory's rotines. Scripts de executables
+DIRHOMEDEFAULTATTIK="/var/.incti"					# Default directory of attik
+DIRPASSWDDB="/var/.incti/.access" 					# Directory's to store password's user attikuser of Data Base
+FILEPASSWDDB="$DIRPASSWDDB/.access_exec.php"				# File's password DB
+DIRBACKUPDB="/var/.incti/backup" 					# Directory's to store backup
+FILEFAILOVER="/var/.incti/failover.conf"				# File's configuration failover
+FILEFAILOVERLOG="/var/.incti/.failover.log"				# File's log failover
+FILEVIPUP="/var/.incti/.failover-up.sh";				# Script for UP the virtual address
+FILEVIPDOWN="/var/.incti/.failover-donw.sh";				# Script for DOWN the virtual address
+FILERULEDEFECT="/var/.incti/.lastruledefect.log"			# File to store the defect rule ID
+FILEPORTHTTPD="/var/.incti/.access/httpd_port.php"			# File to stor HTTP port of http server
+DIRGRAPHS="$DIRINSTALLICC/attik/modules/firewall/graph"
+FILEDIRECTORY="$DIRINSTALLICC/attik/configuration/directory.php"
+DIRSOURCE=$(pwd)
+FILEAUTOSTART="/etc/init.d/firewall"
+FILESAVERULE="/etc/init.d/rc.firewall"
+
+mkdir $DIRHOMEDEFAULTATTIK
+
+echo "
+#############----- Attik Password:
+#########--------------------------------------"
+stty -echo
+read PASS
+stty echo
+echo "Repeat Password:"
+stty -echo
+read PASS2
+stty echo
+while [ "$PASS" != "$PASS2" ]
+do
+echo "The password are different. Try again:"
+stty -echo
+read PASS
+stty echo
+echo "Repeat:"
+stty -echo
+read PASS2
+stty echo
+done
+
+echo "
+#- Do you like install the DNS service? [y,n] n
+#########--------------------------------------
+## This service can be used for do cache of 
+## resolutions in your net, for example.
+#########--------------------------------------
+"
+read INSTALLDNS
+
+echo "The port used of apache:"
+read READHTTPDPORT
+
+# Packages that will install.
+echo "Updating the apt source..."
+apt-get update
+
+echo "Install the Web Server.."
+apt-get install apache2 -y 
+
+echo "Install the Data Base..."
+apt-get install mysql-server -y 
+
+echo "Install the programing language..."
+apt-get install php5 php5-cli php5-cgi libapache2-mod-php5 -y
+apt-get install php5-mysql php5-gd php5-dev -y 
+
+echo "Install the compiler..."
+apt-get install gcc g++ make automake -y 
+
+echo "Install the compressor..."
+apt-get install bzip2 -y 
+
+echo "Install the tool to obtein privilegies to execute command..."
+apt-get install sudo -y
+
+echo "Install VLAN services..."
+apt-get install vlan -y
+
+echo "Install redundancy protocol..."
+apt-get install ucarp -y
+
+echo "Install tool killall..."
+apt-get install killall -y
+
+echo "Install VPN tool ..."
+apt-get install openswan -y
+
+if [ "$INSTALLDNS" == "y" ]; then
+	echo "Install the DNS service..."
+	apt-get install bind9 -y
+fi
+
+# End installing packages.
+
+if [ ! -e $DIRROTINES ]; then
+	# Executable's rotines
+	mkdir -p $DIRROTINES
+fi
+
+if [ ! -e $DIRINSTALLICC ]; then
+	# Every files's IncTI have be in this directory exception scripts's rotines and password's DB to attikuser
+	mkdir -p $DIRINSTALLICC
+fi
+
+if [ ! -e $DIRPASSWDDB ]; then
+	# Store the password of attikuser. This password will use to connect in Data Bases of Control Center
+	mkdir -p $DIRPASSWDDB
+fi
+
+if [ ! -e $DIRBACKUPDB ]; then
+	# Store the backups of Control Center
+	mkdir -p $DIRBACKUPDB
+fi
+
+echo "Building the Data Base..."
+mysql -e "SET PASSWORD FOR root@localhost = PASSWORD('$PASS')"
+mysql -u root -p$PASS < $DIRSOURCE/files/attik.sql
+mysql -u root -p$PASS -e "GRANT ALL PRIVILEGES ON  cc_backup.* TO attikuser@localhost IDENTIFIED BY '$PASS'";
+mysql -u root -p$PASS -e "GRANT ALL PRIVILEGES ON  cc_firewall.* TO attikuser@'%' IDENTIFIED BY '$PASS'";
+mysql -u root -p$PASS -e "GRANT ALL PRIVILEGES ON  controlcenter.* TO attikuser@localhost IDENTIFIED BY '$PASS'";
+
+# Configuration sudo
+echo '# Permition to user of web execute this commands
+attikuserweb	ALL=NOPASSWD:/sbin/iptables
+attikuserweb	ALL=NOPASSWD:/sbin/iptables-save
+attikuserweb	ALL=NOPASSWD:/sbin/iptables-restore
+attikuserweb	ALL=NOPASSWD:/usr/bin/mysql
+attikuserweb	ALL=NOPASSWD:/usr/bin/chattr
+attikuserweb	ALL=NOPASSWD:/bin/ln
+attikuserweb	ALL=NOPASSWD:/sbin/ifconfig
+attikuserweb	ALL=NOPASSWD:/sbin/route
+attikuserweb	ALL=NOPASSWD:/usr/sbin/ucarp
+attikuserweb	ALL=NOPASSWD:/usr/bin/killall
+attikuserweb	ALL=NOPASSWD:/bin/echo
+attikuserweb	ALL=NOPASSWD:/sbin/modprobe
+attikuserweb	ALL=NOPASSWD:/usr/bin/tail
+attikuserweb	ALL=NOPASSWD:/usr/bin/tee
+attikuserweb	ALL=NOPASSWD:/bin/chown
+attikuserweb	ALL=NOPASSWD:/bin/chmod
+attikuserweb	ALL=NOPASSWD:/bin/touch
+attikuserweb	ALL=NOPASSWD:/sbin/hdparm
+attikuserweb	ALL=NOPASSWD:/bin/df
+attikuserweb	ALL=NOPASSWD:/bin/cat
+attikuserweb	ALL=NOPASSWD:/etc/init.d/ipsec
+attikuserweb	ALL=NOPASSWD:/usr/sbin/ipsec
+' >> /etc/sudoers
+
+# Copy the file for directory's instalation
+cp -r $DIRSOURCE/files/attik $DIRINSTALLICC
+
+echo "<?php
+\$DIRROTINES = \"$DIRROTINES\"; 
+\$DIRPASSWDDB = \"$DIRPASSWDDB\";
+\$DIRBACKUPDB = \"$DIRBACKUPDB\";
+
+\$FILEPASSWDDB = \"$DIRBACKUPDB/.access_exec.php\";
+?>" >> $FILEDIRECTORY
+
+echo $READHTTPDPORT > $FILEPORTHTTPD
+
+echo '<?php $INCTIPW = '\"$PASS\"'; ?>' > $FILEPASSWDDB
+
+echo "Build the connection with Data Base"
+echo '<?php
+$hostname = "127.0.0.1";
+$username = "attikuser";
+$password = '\"$PASS\"';
+$url = mysql_connect($hostname,$username,$password);
+?>' > $DIRINSTALLICC/attik/includes/conn_db_cc.php
+
+echo "Defining the password..."
+echo "<?php \$INCTIPW = \"$PASS\"; ?>" > $DIRPASSWDDB/.access_exec.php
+
+# Build the directory's Control Center
+ln -s $DIRINSTALLICC/attik/includes/lib_graph/.lib_graph\@/ $DIRINSTALLICC/attik/modules/firewall/graph/.lib
+
+echo "Configuring th Web Server..."
+useradd attikuserweb -d /var/www -s /usr/sbin/nologin
+echo "AddDefaultCharset ISO-8859-1" > /etc/apache2/conf.d/charset
+cp /etc/apache2/sites-available/default /etc/apache2/sites-available/default.temp
+sed '14i\		RedirectMatch ^/$ /attik/' /etc/apache2/sites-available/default.temp > /etc/apache2/sites-available/default
+rm -f /etc/apache2/sites-available/default.temp
+cp /etc/apache2/envvars /etc/apache2/envvars.temp
+sed 's/APACHE_RUN_USER=www-data/APACHE_RUN_USER=attikuserweb/' /etc/apache2/envvars.temp > /etc/apache2/envvars
+rm -f /etc/apache2/envvars.temp
+cp /etc/apache2/conf.d/security /etc/apache2/conf.d/security.temp
+sed 's/ServerTokens Full/ServerTokens Prod/' /etc/apache2/conf.d/security.temp > /etc/apache2/conf.d/security
+cp /etc/apache2/conf.d/security /etc/apache2/conf.d/security.temp
+sed 's/ServerSignature On/ServerSignature Off/' /etc/apache2/conf.d/security.temp > /etc/apache2/conf.d/security
+rm -f /etc/apache2/conf.d/security.temp
+
+echo "Creating the auto starting..."
+if [ ! -e "$FILEAUTOSTART" ];then
+	touch $FILEAUTOSTART
+fi
+if [ ! -e "$FILESAVERULE" ]; then
+	touch $FILESAVERULE
+fi
+if [ ! -e "$FILERULEDEFECT" ]; then
+	touch $FILERULEDEFECT
+fi
+
+echo "Applied permitions..."
+chown -R attikuserweb.www-data /var/lib/php5/ $DIRINSTALLICC/ $DIRROTINES/ $FILESAVERULE $FILEAUTOSTART
+chown attikuserweb /var/lock/apache2
+chmod -R 555 $DIRINSTALLICC/ $DIRROTINES/
+chmod -R 655 $DIRPASSWDDB/ $FILEPASSWDDB $DIRBACKUPDB/ $DIRGRAPHS/
+chmod -R 700 $FILESAVERULE $FILEAUTOSTART
+chown -R attikuserweb.www-data $DIRHOMEDEFAULTATTIK
+chmod -R 770 $DIRHOMEDEFAULTATTIK
+chmod 700 $DIRINSTALLICC/attik/configuration/
+chmod 744 $DIRINSTALLICC/attik/configuration/variablegeneral.php
+
+chmod 644 $DIRINSTALLICC/attik/modules/firewall/includes/variable_personal.php
+
+echo "Configuring the reports..."
+echo "# Rotine for will create graphs
+00 1	* * *	attikuserweb	$DIRINSTALLICC/attik/modules/firewall/graph/.generateReports.sh
+" >> /etc/crontab
+
+echo "Creating routines..."
+cp $DIRSOURCE/files/attik/modules/firewall/.generate_history.sh $DIRROTINES
+cp $DIRSOURCE/files/attik/modules/firewall/.choose_report_protocol.sh $DIRROTINES
+cp $DIRSOURCE/files/attik/modules/firewall/.choose_report_service.sh $DIRROTINES
+
+echo "Creating failover configurations..."
+touch $FILEFAILOVER $FILEVIPUP $FILEVIPDOWN
+chmod 755 $FILEFAILOVER $FILEVIPUP $FILEVIPDOWN
+chown attikuserweb.www-data $FILEFAILOVER $FILEVIPUP $FILEVIPDOWN
+
+echo "Restarting the Web server..."
+/etc/init.d/apache2 restart
